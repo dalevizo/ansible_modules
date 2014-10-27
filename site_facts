@@ -1,0 +1,130 @@
+#!/usr/bin/python
+
+import datetime
+try:
+    import json
+except ImportError:
+    import simplejson as json
+from subprocess import Popen, PIPE
+import os
+import glob
+import operator
+import re
+
+def execute(cmd):
+            p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+            (out, err) = p.communicate()
+            if p.returncode or err:
+                return None
+            return out.rstrip()
+
+facts = {}
+nfs_mounts = []
+crons = []
+crontab = []
+cron_d = []
+cron_hourly = []
+cron_daily = []
+cron_weekly = []
+cron_monthly = []
+listening_ports = []
+
+try:
+        mount_output = Popen(["mount", "-l", "-t", "nfs"],stdout=PIPE).stdout.read()
+	for line in mount_output.splitlines():
+		nfs_mounts.append(line.split('type')[0].rstrip())
+except OSError:
+        pass
+
+try:
+        netstat_tcp_output = Popen(["netstat", "-ltp"],stdout=PIPE).stdout.read()
+	for line in netstat_tcp_output.splitlines()[2:]:
+		line = re.sub(r'\s-\s','-/-',line)
+		listening_ports.append(operator.itemgetter(0)(line.split()) + " " + operator.itemgetter(3)(line.split()) + " " + operator.itemgetter(6)(line.split()).split('/')[1])
+except OSError:
+        pass
+try:
+        netstat_udp_output = Popen(["netstat", "-lup"],stdout=PIPE).stdout.read()
+	for line in netstat_udp_output.splitlines()[2:]:
+		line = re.sub(r'\s-\s','-/-',line)
+		listening_ports.append(operator.itemgetter(0)(line.split()) + " " + operator.itemgetter(3)(line.split()) + " " + operator.itemgetter(5)(line.split()).split('/')[1])
+except OSError:
+        pass
+
+#crons
+try:
+	files=glob.glob('/var/spool/cron/*')
+	for file in files:
+		f=open(file, 'r')
+		for line in f.read().rstrip().splitlines():
+			if not line.startswith("#") and line.strip() != '':
+				crons.append(line)
+		f.close()
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/crontab')
+	for file in files:
+		f=open(file, 'r')
+		for line in f.read().rstrip().splitlines():
+			if not line.startswith("#") and line.strip() != '':
+				crontab.append(line)
+		f.close()
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/cron.daily/*')
+	for file in files:
+		cron_daily.append(file)
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/cron.hourly/*')
+	for file in files:
+		cron_hourly.append(file)
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/cron.weekly/*')
+	for file in files:
+		cron_weekly.append(file)
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/cron.monthly/*')
+	for file in files:
+		cron_monthly.append(file)
+except OSError:
+        pass
+try:
+	files=glob.glob('/etc/cron.d/*')
+	for file in files:
+		cron_d.append(file)
+except OSError:
+        pass
+
+try:
+        hostname = Popen(["hostname"],stdout=PIPE).stdout.read()
+	facts['hostname'] = hostname.rstrip()
+except OSError:
+        pass
+
+try:
+	if execute('dmidecode -s system-manufacturer') == 'VMware, Inc.':
+		facts['product_serial'] = execute('dmidecode -s system-uuid') or 'NA'
+	else:	
+		facts['product_serial'] = execute('dmidecode -s system-serial-number') or 'NA'
+except OSError:
+	pass
+
+facts['nfs_mounts'] = nfs_mounts
+facts['crons'] = crons
+facts['crontab'] = crontab
+facts['cron_d'] = cron_d
+facts['cron_hourly'] = cron_hourly
+facts['cron_daily'] = cron_daily
+facts['cron_weekly'] = cron_weekly
+facts['cron_monthly'] = cron_monthly
+facts['listening_ports'] = listening_ports
+
+print json.dumps({"ansible_facts": facts })

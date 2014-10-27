@@ -1,0 +1,92 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import sys
+try:
+    from rac import RAC
+except ImportError:
+    print "failed=True msg='rac module not available'"
+    sys.exit(1)
+import datetime
+try:
+    import json
+except ImportError:
+    import simplejson as json
+import os
+import suds
+
+
+facts = {}
+
+def get_warr(svctag):
+        # url = "http://xserv.dell.com/services/assetservice.asmx?WSDL"
+        url = "http://143.166.84.118/services/assetservice.asmx?WSDL"
+        client = suds.client.Client(url)
+        res=client.service.GetAssetInformation('12345678-1234-1234-1234-123456789012', 'dellwarrantycheck', svctag)
+
+
+        asset=res['Asset'][0]
+
+        hdrdata=asset['AssetHeaderData']
+        if 'Entitlements' in asset:
+                ent=asset['Entitlements'][0]
+        else:
+                ent=[]
+
+        shipped=hdrdata['SystemShipDate']
+        days=[]
+	dates=[]
+        for i in ent:
+                if i==None:
+                        continue
+                days.append(i['DaysLeft'])
+		dates.append(i['EndDate'])
+        if days and dates:
+                days.sort()
+		daysleft =  str(max(days))
+		dates.sort()
+		dateends = dates[-1]
+        else:
+                daysleft = "0"
+		dateends = "0000-00-00 00:00"
+
+	return { 'daysleft': daysleft, 'dateends': dateends }
+
+def main():
+
+    module = AnsibleModule(
+        argument_spec = dict(
+            host = dict(required=True, aliases=['target']),
+	    password = dict(required=False, default="calvin"),
+        )
+    )
+
+    host = module.params.get('host')
+    passwords = [module.params.get('password'),'calvin']
+    for password in passwords:
+    	try:
+		rac = RAC(host,'root',password)
+		break
+    	except Exception, e:
+		pass
+    else:
+    	module.fail_json(msg='Failed to connect to %s: %s' % (host, e))
+
+    output = rac.run_command('getsysinfo -s').splitlines()
+    for line in output:
+	if line.startswith('System Model'):
+		facts['ansible_product_name'] = line.split('=')[1].lstrip()
+        elif line.startswith('Service Tag'):
+		facts['product_serial'] = line.split('=')[1].lstrip()
+    		facts['dell_warranty_days_left'] = get_warr(line.split('=')[1].lstrip())['daysleft']
+    		facts['dell_warranty_date_ends'] = str(get_warr(line.split('=')[1].lstrip())['dateends'])
+	elif line.startswith('Host Name'):
+		facts['ansible_fqdn'] = line.split('=')[1].lstrip()
+	elif line.startswith('Power Status'):
+		facts['power_status'] = line.split('=')[1].lstrip()
+
+    module.exit_json(ansible_facts=facts)
+
+# this is magic, see lib/ansible/module_common.py
+#<<INCLUDE_ANSIBLE_MODULE_COMMON>>
+main()
